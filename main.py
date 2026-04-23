@@ -11,8 +11,8 @@ load_dotenv()
 
 # Groq Setup
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-# Usamos el modelo más avanzado solicitado
-MODEL_ID = "meta-llama/llama-4-scout-17b-16e-instruct"
+# Usamos el modelo multimodal oficial de Groq para visión
+MODEL_ID = "llama-3.2-11b-vision-preview"
 
 app = FastAPI(title="Facturas AI API", version="1.1.0")
 
