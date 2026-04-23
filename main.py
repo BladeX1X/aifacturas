@@ -1,134 +1,91 @@
 import os
 import json
-from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+import functions_framework
 from groq import Groq
-from supabase import create_client, Client
 from dotenv import load_dotenv
 
+# Cargar variables de entorno
 load_dotenv()
 
-# Groq Setup
+# Inicialización
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Supabase Setup (Opcional por ahora)
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+# Modelo Multimodal y con Memoria
+MODEL_ID = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-def get_supabase_client():
-    if not supabase_url or not supabase_url.startswith("http"):
-        print("Aviso: Supabase no está configurado o la URL es inválida. Saltando conexión.")
-        return None
-    try:
-        return create_client(supabase_url, supabase_key)
-    except Exception as e:
-        print(f"Error al conectar con Supabase: {e}")
-        return None
-
-supabase = get_supabase_client()
-
-app = FastAPI(title="Facturas AI API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-class Concepto(BaseModel):
-    descripcion: str
-    cantidad: float
-    precio_unitario: float
-    importe: float
-
-class Factura(BaseModel):
-    comercio: str
-    rfc_emisor: Optional[str] = None
-    fecha: str
-    total: float
-    impuestos: float
-    conceptos: List[Concepto] = []
-
-@app.get("/")
-def read_root():
-    return {"message": "Facturas AI - Chatbot Activo"}
-
-class QueryRequest(BaseModel):
-    question: str
-
-@app.post("/api/query")
-async def query_invoices(request: QueryRequest):
+@functions_framework.http
+def chat_handler(request):
     """
-    Endpoint principal del chatbot.
+    Controlador para Google Cloud Functions que soporta:
+    - Chat con memoria (history)
+    - Análisis de imágenes (base64)
+    - Modelo Llama 4 Scout
     """
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
+
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+    }
+
     try:
-        # Schema info provided to Gemini to help it understand what it can do
-        schema = """
-        Tablas disponibles (si Supabase está conectado):
-        1. facturas: id, comercio, rfc_emisor, fecha (YYYY-MM-DD), total, impuestos
-        2. conceptos: id, factura_id, descripcion, cantidad, precio_unitario, importe
-        """
+        request_json = request.get_json(silent=True)
+        if not request_json:
+            return (json.dumps({"error": "No JSON received"}), 400, headers)
+
+        question = request_json.get('question', 'Analiza esto')
+        history = request_json.get('history', [])
+        image_base64 = request_json.get('image_base64')
+
+        messages = []
         
-        prompt = f"""
-        Eres 'Facturas AI', un asistente virtual inteligente, amable y profesional especializado en finanzas personales y gestión de facturas.
-        
-        Tu objetivo es ayudar al usuario con cualquier duda que tenga. 
-        - Si te saludan, responde de forma cálida.
-        - Si preguntan sobre sus gastos o facturas, intenta generar una consulta SQL basada en este esquema:
-        {schema}
-        - Si no tienes acceso a la base de datos (Supabase no configurado), explícalo amablemente y ofrece ayuda general.
-        
-        Formatos de respuesta obligatorios:
-        1. Para SQL: {{"type": "sql", "query": "SELECT ..."}}
-        2. Para texto directo: {{"type": "text", "answer": "Tu respuesta aquí"}}
-        
-        Pregunta del usuario: "{request.question}"
-        """
-        
+        # System prompt
+        messages.append({
+            "role": "system", 
+            "content": "Eres 'Facturas AI', un asistente experto en finanzas. Ayuda al usuario analizando sus facturas y respondiendo preguntas."
+        })
+
+        # Memoria del chat
+        for msg in history:
+            role = "assistant" if msg.get("role") == "assistant" else "user"
+            messages.append({
+                "role": role,
+                "content": msg.get("text", "")
+            })
+
+        # Pregunta actual + Imagen
+        if image_base64:
+            content = [
+                {"type": "text", "text": question},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                }
+            ]
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": question})
+
+        # Llamada a Groq
         response = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model=GROQ_MODEL,
+            messages=messages,
+            model=MODEL_ID,
         )
-        content = response.choices[0].message.content.strip()
         
-        # Limpieza de JSON si Gemini incluyó markdown
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
+        answer = response.choices[0].message.content.strip()
+        
+        return (json.dumps({
+            "status": "success", 
+            "answer": answer,
+            "model_used": MODEL_ID
+        }), 200, headers)
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            return {"status": "success", "answer": content} # Fallback to raw text
-        
-        if data.get("type") == "text" or "answer" in data:
-            return {"status": "success", "answer": data.get("answer", content)}
-        
-        # Ejecución de SQL si aplica
-        if data.get("type") == "sql" and supabase:
-            try:
-                res = supabase.rpc("execute_sql", {"query": data["query"]}).execute()
-                result_str = json.dumps(res.data)
-                summary_prompt = f"Explica estos datos de forma natural al usuario: {result_str}. Pregunta original: '{request.question}'"
-                summary_res = groq_client.chat.completions.create(
-                    messages=[{"role": "user", "content": summary_prompt}],
-                    model=GROQ_MODEL,
-                )
-                return {"status": "success", "answer": summary_res.choices[0].message.content}
-            except Exception as sql_err:
-                return {"status": "success", "answer": f"Lo siento, tuve un problema al consultar tus datos: {str(sql_err)}"}
-        
-        return {"status": "success", "answer": data.get("answer", "No estoy seguro de cómo responder a eso, pero estoy aquí para ayudarte.")}
-        
     except Exception as e:
-        print(f"ERROR EN EL CHATBOT: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error en el chatbot: {str(e)}")
-
+        return (json.dumps({"error": str(e)}), 500, headers)
