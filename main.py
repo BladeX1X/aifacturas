@@ -11,8 +11,8 @@ load_dotenv()
 
 # Groq Setup
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-# Usamos el modelo multimodal oficial de Groq para visión
-MODEL_ID = "llama-3.2-11b-vision-preview"
+# Usamos Llama 4 Scout (Multimodal)
+MODEL_ID = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 app = FastAPI(title="Facturas AI API", version="1.1.0")
 
@@ -45,13 +45,15 @@ async def query_invoices(request: QueryRequest):
     try:
         messages = []
         
-        # System prompt especializado en Gastos Personales
+        # System prompt especializado en Gastos Personales con Visión
         messages.append({
             "role": "system", 
-            "content": """Eres 'Gastos AI', un asistente experto en finanzas personales. 
+            "content": """Eres 'Gastos AI', un asistente experto en finanzas personales con capacidades de VISIÓN. 
             Tu objetivo es ayudar al usuario a registrar sus gastos de forma rápida y sencilla.
             
-            - Si el usuario dice que gastó dinero (ej: 'Me gasté 50 en un café'), confirma el registro con un tono amable y profesional.
+            - Puedes ver y analizar imágenes de tickets, facturas y recibos.
+            - Si el usuario sube una imagen, extrae el monto, el comercio y la categoría.
+            - Si el usuario habla o escribe, confirma el registro con un tono amable y profesional.
             - Categoriza el gasto automáticamente (Comida, Transporte, Entretenimiento, etc.).
             - Responde de forma concisa pero útil.
             - Ejemplo: '¡Entendido! He registrado tu gasto de 50€ en Starbucks bajo la categoría de Comida.'
