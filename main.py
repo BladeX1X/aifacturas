@@ -45,10 +45,17 @@ async def query_invoices(request: QueryRequest):
     try:
         messages = []
         
-        # System prompt
+        # System prompt especializado en Gastos Personales
         messages.append({
             "role": "system", 
-            "content": "Eres 'Facturas AI', un asistente experto en finanzas. Ayuda al usuario analizando sus facturas y respondiendo preguntas de forma profesional y amable."
+            "content": """Eres 'Gastos AI', un asistente experto en finanzas personales. 
+            Tu objetivo es ayudar al usuario a registrar sus gastos de forma rápida y sencilla.
+            
+            - Si el usuario dice que gastó dinero (ej: 'Me gasté 50 en un café'), confirma el registro con un tono amable y profesional.
+            - Categoriza el gasto automáticamente (Comida, Transporte, Entretenimiento, etc.).
+            - Responde de forma concisa pero útil.
+            - Ejemplo: '¡Entendido! He registrado tu gasto de 50€ en Starbucks bajo la categoría de Comida.'
+            """
         })
 
         # Memoria del chat
